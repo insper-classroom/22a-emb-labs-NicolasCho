@@ -176,7 +176,9 @@ uint32_t _pio_get(Pio *p_pio, const pio_type_t ul_type,
 }
 
 _delay_ms(int delay){
-	
+	for(int i = 0; i<300000*delay; i++){
+		asm("NOP");
+	}
 }
 
 // Função de inicialização do uC
@@ -289,9 +291,9 @@ int main(void)
 			int i;
 			for(i=0; i<5; i++){
 				_pio_set(PIOC, LED_PIO_IDX_MASK);      // Coloca 1 no pino LED
-				delay_ms(200);                        // Delay por software de 200 ms
+				_delay_ms(200);                        // Delay por software de 200 ms
 				_pio_clear(PIOC, LED_PIO_IDX_MASK);    // Coloca 0 no pino do LED
-				delay_ms(200);                        // Delay por software de 200 ms
+				_delay_ms(200);                        // Delay por software de 200 ms
 			}
 		}
   }
