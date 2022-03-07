@@ -237,6 +237,11 @@ int main (void)
 			but_flag = 0;
 		}
 		
+		//ABAIXA A FLAG DE STOP
+		if(stop_flag){
+			stop_flag = 0;
+		}
+		
 		//DIMINUI FREQ
 		if(but3_flag){
 			delay += 100;
