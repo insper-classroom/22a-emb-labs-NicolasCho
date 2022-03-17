@@ -24,6 +24,11 @@
 #define BUT_PIO1_ID  ID_PIOD
 #define BUT_PIO1_IDX   28
 #define BUT_PIO1_IDX_MASK (1u << BUT_PIO1_IDX)
+//BUT3
+#define BUT_PIO3    PIOA
+#define BUT_PIO3_ID  ID_PIOA
+#define BUT_PIO3_IDX   19
+#define BUT_PIO3_IDX_MASK (1u << BUT_PIO3_IDX)
 
 typedef struct  {
 	uint32_t year;
@@ -35,7 +40,13 @@ typedef struct  {
 	uint32_t second;
 } calendar;
 
-volatile char flag_but1, flag_rtc_alarm;
+volatile char flag_but1, flag_but3, flag_rtc_alarm, flag_tc_time, flag_tc_led3;
+
+volatile int seconds = 0;
+volatile int minutes = 0;
+volatile int hours = 0;
+volatile int counter = 0;
+
 /************************************************************/
 
 void inits(int estado);
@@ -43,15 +54,15 @@ void TC_init(Tc * TC, int ID_TC, int TC_CHANNEL, int freq);
 void pin_toggle(Pio *pio, uint32_t mask);
 static void RTT_init(float freqPrescale, uint32_t IrqNPulses, uint32_t rttIRQSource);
 void RTC_init(Rtc *rtc, uint32_t id_rtc, calendar t, uint32_t irq_type);
-
-
+void display_time(void);
+void update_time(void);
 /************************************************************/
 //FUNCOES
 void pin_toggle(Pio *pio, uint32_t mask) {
 	if(pio_get_output_data_status(pio, mask)){
 		pio_clear(pio, mask);
 	}else{
-	pio_set(pio,mask);
+		pio_set(pio,mask);
 	}
 }
 
@@ -62,6 +73,42 @@ void pisca_led (int n, int t) {
 		pio_set(OLED_PIO3, OLED_PIO3_IDX_MASK);
 		delay_ms(t);
 	}
+}
+
+void update_time(void){
+	seconds++;
+	if (seconds == 60){
+		seconds = 0;
+		minutes++;
+		
+		if(minutes == 60){
+			minutes = 0;
+			hours++;
+			
+			if(hours == 24){
+				hours = 0;
+			}
+		}
+	}
+}
+
+void display_time(void){
+	gfx_mono_draw_string("                    ", 10,8, &sysfont);
+	
+	char hours_str[128];
+	sprintf(hours_str, "%02d", hours);
+	
+	char minutes_str[128];
+	sprintf(minutes_str, "%02d", minutes);
+	
+	char seconds_str[128];
+	sprintf(seconds_str, "%02d", seconds);
+	
+	gfx_mono_draw_string(hours_str, 20,8, &sysfont);
+	gfx_mono_draw_string(":", 40,8, &sysfont);
+	gfx_mono_draw_string(minutes_str, 50,8, &sysfont);
+	gfx_mono_draw_string(":", 70,8, &sysfont);
+	gfx_mono_draw_string(seconds_str, 80,8, &sysfont);
 }
 /***********************/
 //HANDLERS e CALLBACKS
@@ -74,6 +121,18 @@ void TC1_Handler(void) {
 
 	/** Muda o estado do LED (pisca) **/
 	pin_toggle(OLED_PIO1, OLED_PIO1_IDX_MASK);  
+}
+
+void TC0_Handler(void){
+	volatile uint32_t status = tc_get_status(TC0, 0);
+	
+	flag_tc_time = 1;
+}
+
+void TC2_Handler(void) {
+	volatile uint32_t status = tc_get_status(TC0, 2);
+	
+	flag_tc_led3 = 1;
 }
 
 void RTT_Handler(void) {
@@ -113,6 +172,10 @@ void but1_callback(){
 	flag_but1 = 1;
 }
 
+void but3_callback(){
+	flag_but3 = 1;
+}
+
 /*****************************/
 //INITS
 void inits(int estado) {
@@ -127,21 +190,37 @@ void inits(int estado) {
 	
 	//Botao
 	pmc_enable_periph_clk(BUT_PIO1_ID);
+	pmc_enable_periph_clk(BUT_PIO3_ID);
 
 	pio_configure(BUT_PIO1, PIO_INPUT, BUT_PIO1_IDX_MASK, PIO_PULLUP|PIO_DEBOUNCE);
 	pio_set_debounce_filter(BUT_PIO1, BUT_PIO1_IDX_MASK, 60);
 
+	pio_configure(BUT_PIO3, PIO_INPUT, BUT_PIO3_IDX_MASK, PIO_PULLUP|PIO_DEBOUNCE);
+	pio_set_debounce_filter(BUT_PIO3, BUT_PIO3_IDX_MASK, 60);
+	
 	pio_handler_set(BUT_PIO1,
 					BUT_PIO1_ID,
 					BUT_PIO1_IDX_MASK,
 					PIO_IT_FALL_EDGE,
 					but1_callback);	
 					
+	pio_handler_set(BUT_PIO3,
+					BUT_PIO3_ID,
+					BUT_PIO3_IDX_MASK,
+					PIO_IT_FALL_EDGE,
+					but3_callback);
+					
 	pio_enable_interrupt(BUT_PIO1, BUT_PIO1_IDX_MASK);
 	pio_get_interrupt_status(BUT_PIO1);
+	
+	pio_enable_interrupt(BUT_PIO3, BUT_PIO3_IDX_MASK);
+	pio_get_interrupt_status(BUT_PIO3);
 
 	NVIC_EnableIRQ(BUT_PIO1_ID);
 	NVIC_SetPriority(BUT_PIO1_ID, 4); // Prioridade 4
+	
+	NVIC_EnableIRQ(BUT_PIO3_ID);
+	NVIC_SetPriority(BUT_PIO3_ID, 4); // Prioridade 4
 	
 };
 
@@ -219,8 +298,15 @@ int main (void)
 	board_init();
 	sysclk_init();
 	inits(1);
+	
+	//Pisca LED 3
 	TC_init(TC0, ID_TC1, 1, 2);
 	tc_start(TC0, 1);
+	
+	//Horario atual
+	TC_init(TC0, ID_TC0, 0, 1);
+	tc_start(TC0, 0);
+	
 	RTT_init(0.25, 0, RTT_MR_RTTINCIEN); 
 	
 	calendar rtc_initial = {2018, 3, 19, 12, 15, 45 ,1};
@@ -231,12 +317,6 @@ int main (void)
   // Init OLED
 	gfx_mono_ssd1306_init();
   
-  
-	gfx_mono_draw_filled_circle(20, 16, 16, GFX_PIXEL_SET, GFX_WHOLE);
-   gfx_mono_draw_string("mundo", 50,16, &sysfont);
-  
-  
-
   /* Insert application code here, after the board has been initialized. */
 	while(1) {
 		if(flag_but1){
@@ -256,6 +336,28 @@ int main (void)
 		if(flag_rtc_alarm){
 			pisca_led(1, 300);
 			flag_rtc_alarm = 0;
+		}
+		
+		if(flag_tc_time){
+			update_time();
+			display_time();
+			flag_tc_time = 0;
+		}
+		
+		if(flag_but3){
+			TC_init(TC0, ID_TC2, 2, 1);
+			tc_start(TC0, 2);
+			flag_but3 = 0;
+		}
+		
+		if(flag_tc_led3){
+			counter++;
+			if(counter == 20){
+				pisca_led(1, 200);    // BLINK Led
+				counter = 0;
+				tc_stop(TC0, 2);
+			}
+			flag_tc_led3 = 0;
 		}
 		
 		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);			
