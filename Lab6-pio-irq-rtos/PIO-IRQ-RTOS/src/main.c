@@ -111,14 +111,14 @@ void but_callback(void) {
   uint32_t decremento = -100;
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   //xSemaphoreGiveFromISR(xSemaphoreBut, &xHigherPriorityTaskWoken);
-  xQueueSend(xQueueButFreq, (void *)&decremento, 10);
+  xQueueSendFromISR(xQueueButFreq, (void *)&decremento, 10);
 }
 
 void but1_callback(void) {
 	uint32_t incremento = 100;
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	//xSemaphoreGiveFromISR(xSemaphoreBut1, &xHigherPriorityTaskWoken);
-	xQueueSend(xQueueButFreq, (void *)&incremento, 10);
+	xQueueSendFromISR(xQueueButFreq, (void *)&incremento, 10);
 }
 
 /************************************************************************/
@@ -169,7 +169,7 @@ static void task_but(void *pvParameters) {
 	  if (delayTicks == 100) {
 		  delayTicks = 900;
 	  }
-	  if (delayTicks == 2100) {
+	  else if (delayTicks == 2100) {
 		  delayTicks = 100;
 	  }
     }
