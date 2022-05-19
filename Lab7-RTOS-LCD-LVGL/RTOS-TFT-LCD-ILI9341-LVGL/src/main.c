@@ -35,8 +35,12 @@ static lv_obj_t * labelClock;
 static lv_obj_t * labelUp;
 static lv_obj_t * labelDown;
 static lv_obj_t * labelFloor;
+static lv_obj_t * labelFloorDigit;
 static lv_obj_t * labelSetValue;
 static lv_obj_t * labelClockValue;
+
+volatile uint32_t current_hour, current_min, current_sec;
+volatile char clock_setter=0;
 
 /************************************************************************/
 /* RTOS                                                                 */
@@ -73,8 +77,6 @@ extern void vApplicationMallocFailedHook(void) {
 /** Semaforo a ser usado pela task led */
 SemaphoreHandle_t xSemaphoreRTC;
 
-/** Queue for msg log send data */
-QueueHandle_t xQueueRTC;
 
 typedef struct  {
 	uint32_t year;
@@ -85,11 +87,6 @@ typedef struct  {
 	uint32_t minute;
 	uint32_t second;
 } calendar;
-
-typedef struct {
-	int hour;
-	int mins;
-} time_struct;
 
 void RTC_init(Rtc *rtc, uint32_t id_rtc, calendar t, uint32_t irq_type);
 
@@ -172,6 +169,7 @@ static void clock_handler(lv_event_t * e) {
 
 	if(code == LV_EVENT_CLICKED) {
 		LV_LOG_USER("Clicked");
+		clock_setter = !clock_setter;
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
 		LV_LOG_USER("Toggled");
@@ -183,9 +181,24 @@ static void up_handler(lv_event_t * e) {
     char *c;
     int temp;
     if(code == LV_EVENT_CLICKED) {
-	    c = lv_label_get_text(labelSetValue);
-	    temp = atoi(c);
-	    lv_label_set_text_fmt(labelSetValue, "%02d", temp + 1);
+		if(clock_setter){
+			current_min++;
+			if(current_min == 60){
+				current_hour++;
+				current_min = 0;
+				
+				if(current_hour == 24){
+					current_hour = 0;
+				}
+			}
+			rtc_set_time(RTC, current_hour, current_min, current_sec);
+		}else{
+			c = lv_label_get_text(labelSetValue);
+			temp = atoi(c);
+			lv_label_set_text_fmt(labelSetValue, "%02d", temp + 1);
+		}
+		
+	    
     }
 }
 
@@ -194,9 +207,24 @@ static void down_handler(lv_event_t * e) {
     char *c;
     int temp;
     if(code == LV_EVENT_CLICKED) {
-	    c = lv_label_get_text(labelSetValue);
-	    temp = atoi(c);
-	    lv_label_set_text_fmt(labelSetValue, "%02d", temp - 1);
+		if(clock_setter){
+			current_min--;
+			
+			if(current_min < 0){
+				current_min = 59;
+				current_hour--;
+				
+				if(current_hour < 0){
+					current_hour = 23;
+				}
+			}
+		rtc_set_time(RTC, current_hour, current_min, current_sec);
+		
+		}else{
+			c = lv_label_get_text(labelSetValue);
+			temp = atoi(c);
+			lv_label_set_text_fmt(labelSetValue, "%02d", temp - 1);
+		}
     }
 }
 
@@ -222,7 +250,7 @@ void lv_ex_btn_1(void) {
 	lv_obj_center(label);
 }
 
-void lv_termostato(int horas, int minutos) {
+void lv_termostato() {
 	//define estilo
 	static lv_style_t style;
 	lv_style_init(&style);
@@ -271,7 +299,7 @@ void lv_termostato(int horas, int minutos) {
 	lv_obj_add_style(up_btn, &style, 0); //aplica estilo
 
 	labelUp = lv_label_create(up_btn);
-	lv_label_set_text(labelUp,"[  ^");
+	lv_label_set_text(labelUp,"[ "LV_SYMBOL_UP);
 	lv_obj_center(labelUp);
 	
 	//DOWN BUTTON
@@ -282,7 +310,7 @@ void lv_termostato(int horas, int minutos) {
 	lv_obj_add_style(down_btn, &style, 0); //aplica estilo
 
 	labelDown = lv_label_create(down_btn);
-	lv_label_set_text(labelDown,"| v  ]");
+	lv_label_set_text(labelDown,"| "LV_SYMBOL_DOWN " ] ");
 	lv_obj_center(labelDown);
 	
 	//TEMPERATURA
@@ -291,6 +319,13 @@ void lv_termostato(int horas, int minutos) {
 	lv_obj_set_style_text_font(labelFloor, &dseg70, LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(labelFloor, lv_color_white(), LV_STATE_DEFAULT);
 	lv_label_set_text_fmt(labelFloor, "%02d", 23);
+	
+	//TEMPERATURA DIGITO
+	labelFloorDigit = lv_label_create(lv_scr_act());
+	lv_obj_align_to(labelFloorDigit, labelFloor,  LV_ALIGN_OUT_RIGHT_MID, 5, 9);
+	lv_obj_set_style_text_font(labelFloorDigit, &dseg40, LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(labelFloorDigit, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(labelFloorDigit, ".%d", 3);
 	
 	//TEMPERATURA REFERENCIA (SET VALUE)
 	labelSetValue = lv_label_create(lv_scr_act());
@@ -304,7 +339,6 @@ void lv_termostato(int horas, int minutos) {
 	lv_obj_align(labelClockValue, LV_ALIGN_TOP_RIGHT, 0 , 0);
 	lv_obj_set_style_text_font(labelClockValue, &dseg20, LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(labelClockValue, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelClockValue, "%02d:%02d", horas, minutos);
 }
 
 /************************************************************************/
@@ -313,41 +347,31 @@ void lv_termostato(int horas, int minutos) {
 
 static void task_lcd(void *pvParameters) {
 	int px, py;
-	int horas;
-	int minutos;
-	time_struct msg;
-
-	lv_termostato(0,0);
+	
+	lv_termostato();
 
 	for (;;)  {
-		if (xQueueReceive(xQueueRTC, &(msg), 1000)) {
-			horas = msg.hour;
-			minutos = msg.mins;
-			lv_termostato(horas, minutos);
-		}
 		lv_tick_inc(50);
 		lv_task_handler();
+		//lv_termostato();
 		vTaskDelay(50);
 	}
 }
 
 static void task_rtc(void *pvParameters) {
 	calendar rtc_initial = {2022, 5, 12, 12, 0, 0 ,0};
-	RTC_init(RTC, ID_RTC, rtc_initial, RTC_IER_ALREN);
-	uint32_t current_hour, current_min, current_sec;
+	RTC_init(RTC, ID_RTC, rtc_initial, RTC_IER_SECEN);	
+	/*
 	uint32_t current_year, current_month, current_day, current_week;
-	rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
 	rtc_get_date(RTC, &current_year, &current_month, &current_day, &current_week);
-	time_struct hour_mins;
+	*/
 		
 	for (;;) {
-		/* aguarda por tempo inderteminado até a liberacao do semaforo */		 
-		if (xSemaphoreTake(xSemaphoreRTC, 1000)) {
-		  hour_mins.hour = current_hour;
-		  hour_mins.mins = current_min;
-		  
-		  xQueueSend(xQueueRTC, &hour_mins, 10);
+		rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
+		if (xSemaphoreTake(xSemaphoreRTC, 10)) {
+			lv_label_set_text_fmt(labelClockValue, "%02d:%02d", current_hour, current_min);
 		}
+		
   }
 }
 
@@ -443,16 +467,10 @@ int main(void) {
 	configure_lvgl();
 
 	 /* Attempt to create a semaphore. */
+	 
 	 xSemaphoreRTC = xSemaphoreCreateBinary();
 	 if (xSemaphoreRTC == NULL)
 		printf("falha em criar o semaforo \n");
-		
-	/* cria queue com 100 "espacos" */
-	/* cada espaço possui o tamanho de um inteiro*/
-	xQueueRTC = xQueueCreate(50, sizeof(time_struct));
-	if (xQueueRTC == NULL)
-		printf("falha em criar a queue \n");
-
 
 	/* Create task to control oled */
 	if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
