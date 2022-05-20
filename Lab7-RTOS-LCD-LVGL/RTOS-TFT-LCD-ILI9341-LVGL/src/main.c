@@ -147,6 +147,7 @@ static void event_handler(lv_event_t * e) {
 
 	if(code == LV_EVENT_CLICKED) {
 		LV_LOG_USER("Clicked");
+		lv_obj_clean(lv_scr_act());
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
 		LV_LOG_USER("Toggled");
